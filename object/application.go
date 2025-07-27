@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/casdoor/casdoor/i18n"
 	"github.com/casdoor/casdoor/util"
@@ -98,31 +99,32 @@ type Application struct {
 	IsShared              bool            `json:"isShared"`
 	IpRestriction         string          `json:"ipRestriction"`
 
-	ClientId                string     `xorm:"varchar(100)" json:"clientId"`
-	ClientSecret            string     `xorm:"varchar(100)" json:"clientSecret"`
-	RedirectUris            []string   `xorm:"varchar(1000)" json:"redirectUris"`
-	ForcedRedirectOrigin    string     `xorm:"varchar(100)" json:"forcedRedirectOrigin"`
-	TokenFormat             string     `xorm:"varchar(100)" json:"tokenFormat"`
-	TokenSigningMethod      string     `xorm:"varchar(100)" json:"tokenSigningMethod"`
-	TokenFields             []string   `xorm:"varchar(1000)" json:"tokenFields"`
-	ExpireInHours           int        `json:"expireInHours"`
-	RefreshExpireInHours    int        `json:"refreshExpireInHours"`
-	SignupUrl               string     `xorm:"varchar(200)" json:"signupUrl"`
-	SigninUrl               string     `xorm:"varchar(200)" json:"signinUrl"`
-	ForgetUrl               string     `xorm:"varchar(200)" json:"forgetUrl"`
-	AffiliationUrl          string     `xorm:"varchar(100)" json:"affiliationUrl"`
-	IpWhitelist             string     `xorm:"varchar(200)" json:"ipWhitelist"`
-	TermsOfUse              string     `xorm:"varchar(100)" json:"termsOfUse"`
-	SignupHtml              string     `xorm:"mediumtext" json:"signupHtml"`
-	SigninHtml              string     `xorm:"mediumtext" json:"signinHtml"`
-	ThemeData               *ThemeData `xorm:"json" json:"themeData"`
-	FooterHtml              string     `xorm:"mediumtext" json:"footerHtml"`
-	FormCss                 string     `xorm:"text" json:"formCss"`
-	FormCssMobile           string     `xorm:"text" json:"formCssMobile"`
-	FormOffset              int        `json:"formOffset"`
-	FormSideHtml            string     `xorm:"mediumtext" json:"formSideHtml"`
-	FormBackgroundUrl       string     `xorm:"varchar(200)" json:"formBackgroundUrl"`
-	FormBackgroundUrlMobile string     `xorm:"varchar(200)" json:"formBackgroundUrlMobile"`
+	ClientId                string         `xorm:"varchar(100)" json:"clientId"`
+	ClientSecret            string         `xorm:"varchar(100)" json:"clientSecret"`
+	RedirectUris            []string       `xorm:"varchar(1000)" json:"redirectUris"`
+	ForcedRedirectOrigin    string         `xorm:"varchar(100)" json:"forcedRedirectOrigin"`
+	TokenFormat             string         `xorm:"varchar(100)" json:"tokenFormat"`
+	TokenSigningMethod      string         `xorm:"varchar(100)" json:"tokenSigningMethod"`
+	TokenFields             []string       `xorm:"varchar(1000)" json:"tokenFields"`
+	ExpireInHours           int            `json:"expireInHours"`
+	RefreshExpireInHours    int            `json:"refreshExpireInHours"`
+	SignupUrl               string         `xorm:"varchar(200)" json:"signupUrl"`
+	SigninUrl               string         `xorm:"varchar(200)" json:"signinUrl"`
+	ForgetUrl               string         `xorm:"varchar(200)" json:"forgetUrl"`
+	AffiliationUrl          string         `xorm:"varchar(100)" json:"affiliationUrl"`
+	IpWhitelist             string         `xorm:"varchar(200)" json:"ipWhitelist"`
+	TermsOfUse              string         `xorm:"varchar(100)" json:"termsOfUse"`
+	SignupHtml              string         `xorm:"mediumtext" json:"signupHtml"`
+	SigninHtml              string         `xorm:"mediumtext" json:"signinHtml"`
+	ThemeData2              *ThemeData     `xorm:"json" json:"themeData2"`
+	ThemeData               map[string]any `xorm:"mediumtext" json:"themeData"`
+	FooterHtml              string         `xorm:"mediumtext" json:"footerHtml"`
+	FormCss                 string         `xorm:"text" json:"formCss"`
+	FormCssMobile           string         `xorm:"text" json:"formCssMobile"`
+	FormOffset              int            `json:"formOffset"`
+	FormSideHtml            string         `xorm:"mediumtext" json:"formSideHtml"`
+	FormBackgroundUrl       string         `xorm:"varchar(200)" json:"formBackgroundUrl"`
+	FormBackgroundUrlMobile string         `xorm:"varchar(200)" json:"formBackgroundUrlMobile"`
 
 	FailedSigninLimit      int `json:"failedSigninLimit"`
 	FailedSigninFrozenTime int `json:"failedSigninFrozenTime"`
@@ -151,17 +153,6 @@ func GetApplications(owner string) ([]*Application, error) {
 func GetOrganizationApplications(owner string, organization string) ([]*Application, error) {
 	applications := []*Application{}
 	err := ormer.Engine.Desc("created_time").Where("organization = ? or is_shared = ? ", organization, true).Find(&applications, &Application{})
-	if err != nil {
-		return applications, err
-	}
-
-	return applications, nil
-}
-
-func GetPaginationApplications(owner string, offset, limit int, field, value, sortField, sortOrder string) ([]*Application, error) {
-	var applications []*Application
-	session := GetSession(owner, offset, limit, field, value, sortField, sortOrder)
-	err := session.Find(&applications)
 	if err != nil {
 		return applications, err
 	}
@@ -350,6 +341,49 @@ func getApplication(owner string, name string) (*Application, error) {
 	realApplicationName, sharedOrg := util.GetSharedOrgFromApp(name)
 
 	application := Application{Owner: owner, Name: realApplicationName}
+	existed, err := ormer.Engine.Get(&application)
+	if err != nil {
+		return nil, err
+	}
+
+	if application.IsShared && sharedOrg != "" {
+		application.Organization = sharedOrg
+	}
+
+	if existed {
+		err = extendApplicationWithProviders(&application)
+		if err != nil {
+			return nil, err
+		}
+
+		err = extendApplicationWithOrg(&application)
+		if err != nil {
+			return nil, err
+		}
+
+		err = extendApplicationWithSigninMethods(&application)
+		if err != nil {
+			return nil, err
+		}
+		err = extendApplicationWithSigninItems(&application)
+		if err != nil {
+			return nil, err
+		}
+
+		return &application, nil
+	} else {
+		return nil, nil
+	}
+}
+
+func GetApplicationByOrganization(organization string, name string) (*Application, error) {
+	if organization == "" || name == "" {
+		return nil, nil
+	}
+
+	realApplicationName, sharedOrg := util.GetSharedOrgFromApp(name)
+
+	application := Application{Organization: organization, Name: realApplicationName}
 	existed, err := ormer.Engine.Get(&application)
 	if err != nil {
 		return nil, err
@@ -685,6 +719,9 @@ func AddApplication(application *Application) (bool, error) {
 	if application.ClientSecret == "" {
 		application.ClientSecret = util.GenerateClientSecret()
 	}
+	if application.CreatedTime == "" {
+		application.CreatedTime = time.Now().Format("2006-01-02 15:04:05")
+	}
 
 	app, err := GetApplicationByClientId(application.ClientId)
 	if err != nil {
@@ -716,12 +753,28 @@ func deleteApplication(application *Application) (bool, error) {
 	return affected != 0, nil
 }
 
-func DeleteApplication(application *Application) (bool, error) {
-	if application.Name == "app-built-in" {
-		return false, nil
+func deleteApplications(applications []*Application) (bool, error) {
+	totalAffected := int64(0)
+	for _, application := range applications {
+		affected, err := ormer.Engine.ID(core.PK{application.Owner, application.Name}).Delete(&Application{})
+		if err != nil {
+			return false, err
+		}
+		totalAffected += affected
 	}
 
-	return deleteApplication(application)
+	return totalAffected > 0, nil
+}
+
+func DeleteApplication(applications []*Application) (bool, error) {
+	// 禁止删除内置应用
+	for _, application := range applications {
+		if application.Name == "app-built-in" {
+			return false, nil
+		}
+	}
+
+	return deleteApplications(applications)
 }
 
 func (application *Application) GetId() string {
@@ -921,4 +974,152 @@ func applicationChangeTrigger(oldName string, newName string) error {
 	}
 
 	return session.Commit()
+}
+
+type LoginInfo struct {
+	Logo                   string          `json:"logo"`
+	HomepageUrl            string          `json:"homepageUrl"`
+	Providers              []*ProviderItem `json:"providers"`
+	PasswordObfuscatorKey  string          `json:"passwordObfuscatorKey"`  // 密钥，用于密码加密传输
+	PasswordObfuscatorType string          `json:"passwordObfuscatorType"` // 密码加密方式，当前固定为 AES
+	Application            string          `json:"application"`            // 应用名称
+	Organization           string          `json:"organization"`           // 组织名称
+}
+
+func GetLoginInfo(application *Application) *LoginInfo {
+	if application == nil {
+		return nil
+	}
+
+	info := &LoginInfo{
+		Logo:        application.Logo,
+		HomepageUrl: application.HomepageUrl,
+		Providers:   application.Providers,
+		Application: application.Name,
+	}
+	if application.OrganizationObj != nil {
+		info.PasswordObfuscatorKey = application.OrganizationObj.PasswordObfuscatorKey
+		info.PasswordObfuscatorType = application.OrganizationObj.PasswordObfuscatorType
+		info.Organization = application.OrganizationObj.Name
+	}
+	return info
+}
+
+// ApplicationInfo
+// swagger:model
+type ApplicationInfo struct {
+	Name         string `json:"name" example:"app-casdoor" description:"应用唯一标识"`
+	DisplayName  string `json:"displayName" example:"Casdoor" description:"应用名称"`
+	CreatedTime  string `json:"createdTime" example:"2022-01-01T12:00:00Z" description:"创建时间"`
+	Logo         string `json:"logo" example:"https://cdn.casdoor.com/logo.png" description:"应用Logo"`
+	HomepageUrl  string `json:"homepageUrl" example:"https://casdoor.org" description:"应用首页URL"`
+	Description  string `json:"description" example:"A great application" description:"应用描述"`
+	Organization string `json:"organization" example:"built-in" description:"所属组织"`
+	// HeaderHtml            string          `json:"headerHtml"`
+	// Providers             []*ProviderItem `json:"providers"`       //身份提供商
+	Tags []string `json:"tags" example:"tag1,tag2" description:"应用标签"`
+}
+
+type ApplicationDetail struct {
+	ApplicationInfo
+	ExpireInHours int `json:"expireInHours" example:"168" description:"Token过期时间（小时）"` // token过期时间
+
+	// EnablePassword        bool            `json:"enablePassword"`   // 是否允许密码登录
+	// GrantTypes            []string        `json:"grantTypes"`
+	// OrganizationObj       *Organization   `json:"organizationObj"`
+	// CertPublicKey         string          `json:"certPublicKey"`
+	// SamlAttributes        []*SamlItem     `json:"samlAttributes"`
+	// IsShared              bool            `json:"isShared"`
+	// IpRestriction         string          `json:"ipRestriction"`
+
+	// ClientId                string     `json:"clientId"`
+	// ClientSecret            string     `json:"clientSecret"`
+	// RedirectUris            []string   `json:"redirectUris"`
+	// ForcedRedirectOrigin    string     `json:"forcedRedirectOrigin"`
+	// RefreshExpireInHours    int        `json:"refreshExpireInHours"`
+	// SignupUrl               string     `json:"signupUrl"`
+	// SigninUrl               string     `json:"signinUrl"`
+	// ForgetUrl               string     `json:"forgetUrl"`
+	// AffiliationUrl          string     `json:"affiliationUrl"`
+	// IpWhitelist             string     `json:"ipWhitelist"`
+	// TermsOfUse              string     `json:"termsOfUse"`
+	SignupHtml    string         `json:"signupHtml" example:"<html>...</html>" description:"注册页面HTML"`
+	SigninHtml    string         `json:"signinHtml" example:"<html>...</html>" description:"登录页面HTML"`
+	ThemeData     map[string]any `json:"themeData" description:"主题数据"`
+	FooterHtml    string         `json:"footerHtml" example:"<p>Footer</p>" description:"页脚HTML"`
+	FormCss       string         `json:"formCss" example:"body { color: red; }" description:"表单CSS"`
+	FormCssMobile string         `json:"formCssMobile" example:"body { color: blue; }" description:"移动端表单CSS"`
+	FormOffset    int            `json:"formOffset" example:"2" description:"表单偏移量"`
+	FormSideHtml  string         `json:"formSideHtml" example:"<div>Side</div>" description:"表单侧边HTML"`
+	// FormBackgroundUrl       string     `json:"formBackgroundUrl"`
+	// FormBackgroundUrlMobile string     `json:"formBackgroundUrlMobile"`
+
+	// FailedSigninLimit      int `json:"failedSigninLimit"`
+	// FailedSigninFrozenTime int `json:"failedSigninFrozenTime"`
+}
+
+type AddApplicationInfo struct {
+	DisplayName   string         `json:"displayName" example:"Casdoor" description:"应用名称"`
+	Tags          []string       `json:"tags" example:"tag1,tag2" description:"应用标签"`
+	Logo          string         `json:"logo" default:"" example:"https://cdn.casdoor.com/logo.png" description:"应用Logo"`
+	HomepageUrl   string         `json:"homepageUrl" default:"" example:"https://casdoor.org" description:"应用首页URL"`
+	Description   string         `json:"description" default:"" example:"A great application" description:"应用描述"`
+	Organization  string         `json:"organization" example:"built-in" validate:"default=built-in" description:"所属组织，非内置平台管理此字段无效"`
+	ExpireInHours int            `json:"expireInHours" default:"12" example:"168" validate:"default=168" description:"Token过期时间（小时）"`
+	SignupHtml    string         `json:"signupHtml" default:"" example:"<html>...</html>" description:"注册页面HTML"`
+	SigninHtml    string         `json:"signinHtml" default:"" example:"<html>...</html>" description:"登录页面HTML"`
+	ThemeData     map[string]any `json:"themeData" default:"" description:"主题数据"`
+	FooterHtml    string         `json:"footerHtml" default:"" example:"<p>Footer</p>" description:"页脚HTML"`
+	FormCss       string         `json:"formCss" default:"" example:"body { color: red; }" description:"表单CSS"`
+	FormCssMobile string         `json:"formCssMobile" default:"" example:"body { color: blue; }" description:"移动端表单CSS"`
+	FormOffset    int            `json:"formOffset" default:"" example:"2" validate:"default=2" description:"表单偏移量"`
+	FormSideHtml  string         `json:"formSideHtml" default:"" example:"<div>Side</div>" description:"表单侧边HTML"`
+}
+
+type DeleteApplicationParams struct {
+	Applications []string `json:"applications" description:"需要删除应用 name 列表"`			
+}
+	
+
+
+func GetApplicationInfos(application []*Application) []*ApplicationInfo {
+	var info []*ApplicationInfo
+	for _, item := range application {
+		info = append(info, &ApplicationInfo{
+			Name:         item.Name,
+			DisplayName:  item.DisplayName,
+			CreatedTime:  item.CreatedTime,
+			Logo:         item.Logo,
+			HomepageUrl:  item.HomepageUrl,
+			Description:  item.Description,
+			Organization: item.Organization,
+			Tags:         item.Tags,
+		})
+	}
+	return info
+}
+
+func GetApplicationInfo(item *Application) *ApplicationDetail {
+	info := &ApplicationInfo{
+		Name:         item.Name,
+		DisplayName:  item.DisplayName,
+		CreatedTime:  item.CreatedTime,
+		Logo:         item.Logo,
+		HomepageUrl:  item.HomepageUrl,
+		Description:  item.Description,
+		Organization: item.Organization,
+		Tags:         item.Tags,
+	}
+	return &ApplicationDetail{
+		ApplicationInfo: *info,
+		ExpireInHours:   item.ExpireInHours,
+		SignupHtml:      item.SignupHtml,
+		SigninHtml:      item.SigninHtml,
+		ThemeData:       item.ThemeData,
+		FooterHtml:      item.FooterHtml,
+		FormCss:         item.FormCss,
+		FormCssMobile:   item.FormCssMobile,
+		FormOffset:      item.FormOffset,
+		FormSideHtml:    item.FormSideHtml,
+	}
 }

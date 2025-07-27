@@ -17,6 +17,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+
+	"github.com/joho/godotenv"
 
 	"github.com/beego/beego"
 	"github.com/beego/beego/logs"
@@ -24,7 +27,6 @@ import (
 	"github.com/casdoor/casdoor/authz"
 	"github.com/casdoor/casdoor/conf"
 	"github.com/casdoor/casdoor/controllers"
-	"github.com/casdoor/casdoor/ldap"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/proxy"
 	"github.com/casdoor/casdoor/radius"
@@ -33,21 +35,35 @@ import (
 )
 
 func main() {
-	object.InitFlag()
+	// Load environment variables from .env if present
+	_ = godotenv.Load()
+	if len(os.Args) > 1 && os.Args[1] == "init" {
+		object.InitInitFlag()
+	} else {
+		object.InitFlag()
+	}
+
 	object.InitAdapter()
 	object.CreateTables()
 
+	// 初始化内置组织对象
 	object.InitDb()
 	object.InitDefaultStorageProvider()
 	object.InitLdapAutoSynchronizer()
 	proxy.InitHttpClient()
+	// 初始化接口权限
 	authz.InitApi()
+	// 初始化enforcer
 	object.InitUserManager()
-	object.InitFromFile()
-	object.InitCasvisorConfig()
+	// object.InitCasvisorConfig() // Disabled: Uncomment if Casvisor integration is required
 	object.InitCleanupTokens()
 
-	util.SafeGoroutine(func() { object.RunSyncUsersJob() })
+	if len(os.Args) > 1 && os.Args[1] == "init" {
+		object.InitFromFile()
+		return
+	}
+
+	// util.SafeGoroutine(func() { object.RunSyncUsersJob() })
 	util.SafeGoroutine(func() { controllers.InitCLIDownloader() })
 
 	// beego.DelStaticPath("/static")
@@ -103,15 +119,16 @@ func main() {
 	port := beego.AppConfig.DefaultInt("httpport", 8000)
 	// logs.SetLevel(logs.LevelInformational)
 	logs.SetLogFuncCall(false)
-
 	err = util.StopOldInstance(port)
 	if err != nil {
 		panic(err)
 	}
 
-	go ldap.StartLdapServer()
+	// go ldap.StartLdapServer()
 	go radius.StartRadiusServer()
 	go object.ClearThroughputPerSecond()
 
+	beego.Info("starting...")
+	logs.Info("Casdoor is starting...")
 	beego.Run(fmt.Sprintf(":%v", port))
 }

@@ -19,9 +19,11 @@ import (
 	"strings"
 
 	"github.com/casdoor/casdoor/conf"
+	"github.com/casdoor/casdoor/errorx"
 	"github.com/casdoor/casdoor/i18n"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
+	"github.com/zdzh/errorx/errcode"
 )
 
 // ResponseJsonData ...
@@ -37,10 +39,44 @@ func (c *ApiController) ResponseJsonData(resp *Response, data ...interface{}) {
 	c.ServeJSON()
 }
 
+func (c *ApiController) WrapResponse(data interface{}, err error) *MsgResponse {
+	resp := &MsgResponse{
+		Code: 0,
+		Msg:  "成功",
+		Data: data,
+	}
+
+	if err != nil {
+		enableErrorMask2 := conf.GetConfigBool("enableErrorMask2")
+		enableErrorMask := conf.GetConfigBool("enableErrorMask")
+		if enableErrorMask2 {
+			err = errorx.DefaultErr
+		} else if enableErrorMask {
+			errStr := errcode.Unwrap(err).Error()
+			if strings.HasPrefix(errStr, "The user: ") && strings.HasSuffix(errStr, " doesn't exist") || strings.HasPrefix(errStr, "用户: ") && strings.HasSuffix(errStr, "不存在") {
+				err = errorx.LoginErr
+			}
+		}
+		resp.Code = errcode.Code(err)
+		resp.Msg = err.Error()
+
+	}
+	return resp
+}
+
 // ResponseOk ...
 func (c *ApiController) ResponseOk(data ...interface{}) {
-	resp := &Response{Status: "ok"}
-	c.ResponseJsonData(resp, data...)
+	// resp := &Response{Status: "ok"}
+
+	resp := &MsgResponse{
+		Code: 0,
+		Msg:  "成功",
+	}
+	if len(data) > 0 {
+		resp.Data = data[0]
+	}
+	c.Data["json"] = resp
+	c.ServeJSON()
 }
 
 // ResponseError ...
@@ -49,8 +85,13 @@ func (c *ApiController) ResponseError(error string, data ...interface{}) {
 	if enableErrorMask2 {
 		error = c.T("subscription:Error")
 
-		resp := &Response{Status: "error", Msg: error}
-		c.ResponseJsonData(resp, data...)
+		resp := &MsgResponse{
+			Code: 101_00_00000,
+			Msg:  error,
+			Data: data,
+		}
+		c.Data["json"] = resp
+		c.ServeJSON()
 		return
 	}
 
@@ -61,8 +102,30 @@ func (c *ApiController) ResponseError(error string, data ...interface{}) {
 		}
 	}
 
-	resp := &Response{Status: "error", Msg: error}
-	c.ResponseJsonData(resp, data...)
+	resp := &MsgResponse{
+		Code: 1010000001,
+		Msg:  error,
+		Data: data,
+	}
+	c.Data["json"] = resp
+	c.ServeJSON()
+}
+
+// ResponseError ...
+func (c *ApiController) ResponseErr(err error, data ...interface{}) {
+	enableErrorMask2 := conf.GetConfigBool("enableErrorMask2")
+	enableErrorMask := conf.GetConfigBool("enableErrorMask")
+	if enableErrorMask2 {
+		err = errorx.DefaultErr
+	} else if enableErrorMask {
+		errStr := errcode.Unwrap(err).Error()
+		if strings.HasPrefix(errStr, "The user: ") && strings.HasSuffix(errStr, " doesn't exist") || strings.HasPrefix(errStr, "用户: ") && strings.HasSuffix(errStr, "不存在") {
+			err = errorx.LoginErr
+		}
+	}
+	resp := c.WrapResponse(data, err)
+	c.Data["json"] = resp
+	c.ServeJSON()
 }
 
 func (c *ApiController) T(error string) string {
@@ -121,7 +184,7 @@ func (c *ApiController) RequireSignedInUser() (*object.User, bool) {
 
 	user, err := object.GetUser(userId)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return nil, false
 	}
 	if user == nil {
@@ -164,7 +227,7 @@ func (c *ApiController) IsOrgAdmin() (bool, bool) {
 
 	user, err := object.GetUser(userId)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return false, false
 	}
 	if user == nil {
@@ -261,12 +324,16 @@ func (c *ApiController) GetProviderFromContext(category string) (*object.Provide
 	return provider, nil
 }
 
-func checkQuotaForApplication(count int) error {
+func checkQuotaForApplication() error {
 	quota := conf.GetConfigQuota().Application
 	if quota == -1 {
 		return nil
 	}
-	if count >= quota {
+	count, err := object.GetApplicationCount("", "", "")
+	if err != nil {
+		return err
+	}
+	if count >= int64(quota) {
 		return fmt.Errorf("application quota is exceeded")
 	}
 	return nil
@@ -300,7 +367,7 @@ func checkQuotaForUser() error {
 		return nil
 	}
 
-	count, err := object.GetUserCount("", "", "", "")
+	count, err := object.GetUserCount("", "", "")
 	if err != nil {
 		return err
 	}
@@ -320,4 +387,31 @@ func getInvalidSmsReceivers(smsForm SmsForm) []string {
 		}
 	}
 	return invalidReceivers
+}
+
+// ResponseSuccess ...
+func (c *ApiController) ResponseSuccess(data interface{}) {
+	resp := &MsgResponse{
+		Code: 0,
+		Msg:  "成功",
+		Data: data,
+	}
+	c.Data["json"] = resp
+	c.ServeJSON()
+}
+
+func QueryResult(data any, count int64) map[string]any {
+	result := make(map[string]any)
+	result["data"] = data
+	result["count"] = count
+	return result
+}
+
+func (c *ApiController) getOrganization() string {
+	userId := c.GetSessionUsername()
+	if userId != "" {
+		organization, _ := util.GetOwnerAndNameFromId(userId)
+		return organization
+	}
+	return ""
 }

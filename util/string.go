@@ -29,6 +29,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/beego/beego/logs"
+	"github.com/casdoor/casdoor/errorx"
 	"github.com/google/uuid"
 )
 
@@ -125,7 +127,9 @@ func SpaceToCamel(name string) string {
 func GetOwnerAndNameFromId(id string) (string, string) {
 	tokens := strings.Split(id, "/")
 	if len(tokens) != 2 {
-		panic(errors.New("GetOwnerAndNameFromId() error, wrong token count for ID: " + id))
+		logs.Warn("id is not <owner>/<name>, id=%s", id)
+		panic(errorx.InvalidParamErr)
+
 	}
 
 	return tokens[0], tokens[1]
@@ -134,7 +138,9 @@ func GetOwnerAndNameFromId(id string) (string, string) {
 func GetOwnerAndNameFromIdWithError(id string) (string, string, error) {
 	tokens := strings.Split(id, "/")
 	if len(tokens) != 2 {
-		return "", "", errors.New("GetOwnerAndNameFromId() error, wrong token count for ID: " + id)
+		logs.Warn("id is not <owner>/<name>, id=%s", id)
+		return "", "", errorx.InvalidParamErr
+		
 	}
 
 	return tokens[0], tokens[1], nil
@@ -143,7 +149,7 @@ func GetOwnerAndNameFromIdWithError(id string) (string, string, error) {
 func GetOwnerFromId(id string) string {
 	tokens := strings.Split(id, "/")
 	if len(tokens) != 2 {
-		panic(errors.New("GetOwnerAndNameFromId() error, wrong token count for ID: " + id))
+		panic(errorx.InvalidParamErr)
 	}
 
 	return tokens[0]

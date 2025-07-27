@@ -50,8 +50,9 @@ type Group struct {
 
 type GroupNode struct{}
 
-func GetGroupCount(owner, field, value string) (int64, error) {
-	session := GetSession(owner, -1, -1, field, value, "", "")
+func GetGroupCount(owner, query string) (int64, error) {
+	// todo
+	session := GetSession(owner, -1, -1, "", "", "", query)
 	count, err := session.Count(&Group{})
 	if err != nil {
 		return 0, err
@@ -70,9 +71,11 @@ func GetGroups(owner string) ([]*Group, error) {
 	return groups, nil
 }
 
-func GetPaginationGroups(owner string, offset, limit int, field, value, sortField, sortOrder string) ([]*Group, error) {
-	groups := []*Group{}
-	session := GetSession(owner, offset, limit, field, value, sortField, sortOrder)
+func GetPaginationGroups(owner string, params *QueryParams) ([]*Group, error) {
+	var groups []*Group
+	session := GetSession(owner, -1, -1, "", "", "", "")
+	//  todo
+	// session := GetFilterSessionByQueryParams(owner, params, []string{"name", "display_name"})
 	err := session.Find(&groups)
 	if err != nil {
 		return nil, err
@@ -237,7 +240,7 @@ func DeleteGroup(group *Group) (bool, error) {
 		return false, errors.New("group has children group")
 	}
 
-	if count, err := GetGroupUserCount(group.GetId(), "", ""); err != nil {
+	if count, err := GetGroupUserCount(group.GetId(), "", nil); err != nil {
 		return false, err
 	} else if count > 0 {
 		return false, errors.New("group has users")
@@ -288,24 +291,40 @@ func ConvertToTreeData(groups []*Group, parentId string) []*Group {
 	return treeData
 }
 
-func GetGroupUserCount(groupId string, field, value string) (int64, error) {
+func GetGroupUserCount(groupId string, query string, fields []string ) (int64, error) {
 	owner, _ := util.GetOwnerAndNameFromId(groupId)
 	names, err := userEnforcer.GetUserNamesByGroupName(groupId)
 	if err != nil {
 		return 0, err
 	}
 
-	if field == "" && value == "" {
+	if query == "" {
 		return int64(len(names)), nil
 	} else {
 		tableNamePrefix := conf.GetConfigString("tableNamePrefix")
-		return ormer.Engine.Table(tableNamePrefix+"user").
-			Where("owner = ?", owner).In("name", names).
-			And(fmt.Sprintf("user.%s like ?", util.CamelToSnakeCase(field)), "%"+value+"%").
-			Count()
+		session := ormer.Engine.Table(tableNamePrefix + "user").
+			Where("owner = ?", owner).In("name", names)
+
+		// 遍历fields，构建like条件，任意字段包含query即可
+		if len(fields) > 0 {
+			likeQuery := "%" + query + "%"
+			cond := session
+			// 构建 or 条件
+			for i, field := range fields {
+				column := fmt.Sprintf("user.%s", util.CamelToSnakeCase(field))
+				if i == 0 {
+					cond = cond.And(fmt.Sprintf("%s like ?", column), likeQuery)
+				} else {
+					cond = cond.Or(fmt.Sprintf("%s like ?", column), likeQuery)
+				}
+			}
+			return cond.Count()
+		} else {
+			// 如果没有指定字段，直接返回总数
+			return int64(len(names)), nil
+		}
 	}
 }
-
 func GetPaginationGroupUsers(groupId string, offset, limit int, field, value, sortField, sortOrder string) ([]*User, error) {
 	users := []*User{}
 	owner, _ := util.GetOwnerAndNameFromId(groupId)
@@ -333,7 +352,7 @@ func GetPaginationGroupUsers(groupId string, offset, limit int, field, value, so
 
 	orderQuery := fmt.Sprintf("%s.%s", prefixedUserTable, util.SnakeString(sortField))
 
-	if sortOrder == "ascend" {
+	if sortOrder == "asc" {
 		session = session.Asc(orderQuery)
 	} else {
 		session = session.Desc(orderQuery)

@@ -19,62 +19,67 @@ import (
 
 	"github.com/beego/beego/utils/pagination"
 	"github.com/casdoor/casdoor/object"
-	"github.com/casdoor/casdoor/util"
 )
 
 // GetGroups
 // @Title GetGroups
 // @Tag Group API
-// @Description get groups
-// @Param   owner     query    string  true        "The owner of groups"
+// @Description 获取分组列表
+// @Param   owner     query    string  true        "组织ID"
+// @Param   pageSize  query    int     false        "分页大小"
+// @Param   p         query    int     false        "分页"
+// @Param   query     query    string     false        "查询内容（名称）"
+// @Param   sortField     query    string     false        "排序字段"
+// @Param   sortOrder     query    string     false        "排序方式: asc, desc"
 // @Success 200 {array} object.Group The Response object
-// @router /get-groups [get]
+// @router /api/groups [get]
 func (c *ApiController) GetGroups() {
-	owner := c.Input().Get("owner")
-	limit := c.Input().Get("pageSize")
-	page := c.Input().Get("p")
-	field := c.Input().Get("field")
-	value := c.Input().Get("value")
-	sortField := c.Input().Get("sortField")
-	sortOrder := c.Input().Get("sortOrder")
+	// owner := c.Input().Get("owner")
+	// limit := c.Input().Get("pageSize")
+	// page := c.Input().Get("p")
+	// query := c.Input().Get("query")
+	// sortField := c.Input().Get("sortField")
+	// sortOrder := c.Input().Get("sortOrder")
+
+	params := c.GetQueryParams()
 	withTree := c.Input().Get("withTree")
 
-	if limit == "" || page == "" {
-		groups, err := object.GetGroups(owner)
+	if params.Limit == 0 || params.Page == 0 {
+		groups, err := object.GetGroups(params.Owner)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
 		err = object.ExtendGroupsWithUsers(groups)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
 		if withTree == "true" {
-			c.ResponseOk(object.ConvertToTreeData(groups, owner))
+			c.ResponseOk(object.ConvertToTreeData(groups, params.Owner))
 			return
 		}
 
 		c.ResponseOk(groups)
 	} else {
-		limit := util.ParseInt(limit)
-		count, err := object.GetGroupCount(owner, field, value)
+		limit := params.Limit
+		count, err := object.GetGroupCount(params.Owner, params.Query)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
 		paginator := pagination.SetPaginator(c.Ctx, limit, count)
-		groups, err := object.GetPaginationGroups(owner, paginator.Offset(), limit, field, value, sortField, sortOrder)
+		groups, err := object.GetPaginationGroups(params.Owner, params)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 		groupsHaveChildrenMap, err := object.GetGroupsHaveChildrenMap(groups)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
@@ -92,7 +97,7 @@ func (c *ApiController) GetGroups() {
 
 		err = object.ExtendGroupsWithUsers(groups)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
@@ -113,13 +118,13 @@ func (c *ApiController) GetGroup() {
 
 	group, err := object.GetGroup(id)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
 	err = object.ExtendGroupWithUsers(group)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
@@ -140,7 +145,7 @@ func (c *ApiController) UpdateGroup() {
 	var group object.Group
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &group)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
@@ -159,7 +164,7 @@ func (c *ApiController) AddGroup() {
 	var group object.Group
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &group)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
@@ -178,10 +183,14 @@ func (c *ApiController) DeleteGroup() {
 	var group object.Group
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &group)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
 	c.Data["json"] = wrapActionResponse(object.DeleteGroup(&group))
 	c.ServeJSON()
+}
+
+func (c *ApiController) UpdateGroupUser() {
+
 }

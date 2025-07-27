@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/beego/beego/context"
 	"github.com/casdoor/casdoor/form"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
@@ -34,6 +35,12 @@ const (
 	ResponseTypeCas     = "cas"
 	ResponseTypeDevice  = "device"
 )
+
+type MsgResponse struct {
+	Code int         `json:"code"`
+	Msg  string      `json:"message"`
+	Data interface{} `json:"data"`
+}
 
 type Response struct {
 	Status string      `json:"status"`
@@ -88,13 +95,13 @@ func (c *ApiController) Signup() {
 	var authForm form.AuthForm
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &authForm)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
 	application, err := object.GetApplication(fmt.Sprintf("admin/%s", authForm.Application))
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 	if application == nil {
@@ -121,7 +128,7 @@ func (c *ApiController) Signup() {
 	clientIp := util.GetClientIpFromRequest(c.Ctx.Request)
 	err = object.CheckEntryIp(clientIp, nil, application, organization, c.GetAcceptLanguage())
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
@@ -176,7 +183,7 @@ func (c *ApiController) Signup() {
 
 	id, err := object.GenerateIdForNewUser(application)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
@@ -199,7 +206,7 @@ func (c *ApiController) Signup() {
 	if authForm.Plan != "" && authForm.Pricing != "" {
 		err = object.CheckPricingAndPlan(authForm.Organization, authForm.Pricing, authForm.Plan)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 		userType = "paid-user"
@@ -262,7 +269,7 @@ func (c *ApiController) Signup() {
 
 	affected, err := object.AddUser(user, c.GetAcceptLanguage())
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
@@ -273,7 +280,7 @@ func (c *ApiController) Signup() {
 
 	err = object.AddUserToOriginalDatabase(user)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
@@ -281,7 +288,7 @@ func (c *ApiController) Signup() {
 		invitation.UsedCount += 1
 		_, err := object.UpdateInvitation(invitation.GetId(), invitation, c.GetAcceptLanguage())
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 	}
@@ -294,7 +301,7 @@ func (c *ApiController) Signup() {
 	if authForm.Email != "" {
 		err = object.DisableVerificationCode(authForm.Email)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 	}
@@ -302,7 +309,7 @@ func (c *ApiController) Signup() {
 	if checkPhone != "" {
 		err = object.DisableVerificationCode(checkPhone)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 	}
@@ -316,13 +323,27 @@ func (c *ApiController) Signup() {
 	c.ResponseOk(userId)
 }
 
+
+func parseBearerToken(ctx *context.Context) string {
+	header := ctx.Request.Header.Get("Authorization")
+	tokens := strings.Split(header, " ")
+	if len(tokens) != 2 {
+		return ""
+	}
+
+	prefix := tokens[0]
+	if prefix != "Bearer" {
+		return ""
+	}
+
+	return tokens[1]
+}
+
+
 // Logout
-// @Title Logout
-// @Tag Login API
+// @Title 退出登录
+// @Tag Auth API
 // @Description logout the current user
-// @Param   id_token_hint   query        string  false        "id_token_hint"
-// @Param   post_logout_redirect_uri    query    string  false     "post_logout_redirect_uri"
-// @Param   state     query    string  false     "state"
 // @Success 200 {object} controllers.Response The Response object
 // @router /logout [post]
 func (c *ApiController) Logout() {
@@ -332,6 +353,9 @@ func (c *ApiController) Logout() {
 	state := c.Input().Get("state")
 
 	user := c.GetSessionUsername()
+	if accessToken == ""{
+		accessToken = parseBearerToken(c.Ctx)
+	}
 
 	if accessToken == "" && redirectUri == "" {
 		// TODO https://github.com/casdoor/casdoor/pull/1494#discussion_r1095675265
@@ -345,7 +369,7 @@ func (c *ApiController) Logout() {
 		owner, username := util.GetOwnerAndNameFromId(user)
 		_, err := object.DeleteSessionId(util.GetSessionId(owner, username, object.CasdoorApplication), c.Ctx.Input.CruSession.SessionID())
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
@@ -371,7 +395,7 @@ func (c *ApiController) Logout() {
 
 		_, application, token, err := object.ExpireTokenByAccessToken(accessToken)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 		if token == nil {
@@ -394,7 +418,7 @@ func (c *ApiController) Logout() {
 
 		_, err = object.DeleteSessionId(util.GetSessionId(owner, username, object.CasdoorApplication), c.Ctx.Input.CruSession.SessionID())
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
@@ -439,14 +463,14 @@ func (c *ApiController) GetAccount() {
 	if managedAccounts == "1" {
 		user, err = object.ExtendManagedAccountsWithUser(user)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 	}
 
 	err = object.ExtendUserWithRolesAndPermissions(user)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
@@ -458,14 +482,14 @@ func (c *ApiController) GetAccount() {
 
 	organization, err := object.GetMaskedOrganization(object.GetOrganizationByUser(user))
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
 	isAdminOrSelf := c.IsAdminOrSelf(user)
 	u, err := object.GetMaskedUser(user, isAdminOrSelf)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
@@ -477,7 +501,7 @@ func (c *ApiController) GetAccount() {
 	if accessToken == "" {
 		accessToken, err = object.GetAccessTokenByUser(user, c.Ctx.Request.Host)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 		c.SetSessionToken(accessToken)
@@ -513,7 +537,7 @@ func (c *ApiController) GetUserinfo() {
 
 	userInfo, err := object.GetUserInfo(user, scope, aud, host)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
@@ -558,7 +582,7 @@ func (c *ApiController) GetCaptcha() {
 
 	captchaProvider, err := object.GetCaptchaProviderByApplication(applicationId, isCurrentProvider, c.GetAcceptLanguage())
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
@@ -566,7 +590,7 @@ func (c *ApiController) GetCaptcha() {
 		if captchaProvider.Type == "Default" {
 			id, img, err := object.GetCaptcha()
 			if err != nil {
-				c.ResponseError(err.Error())
+				c.ResponseErr(err)
 				return
 			}
 

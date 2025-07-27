@@ -18,89 +18,89 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/beego/beego/logs"
 	"github.com/beego/beego/utils/pagination"
+	"github.com/casdoor/casdoor/errorx"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
+	"github.com/google/uuid"
+	"github.com/mcuadros/go-defaults"
 )
 
 // GetApplications
 // @Title GetApplications
 // @Tag Application API
 // @Description get all applications
-// @Param   owner     query    string  true        "The owner of applications."
-// @Success 200 {array} object.Application The Response object
-// @router /get-applications [get]
+// @Param 		pageSize 	query 		integer 			false 				"Page Size"
+// @Param 		p 			query 		integer 				false 				"Page Number"
+// @Param 		query 		query 		string 				false 				"Field"
+// @Param 		sortField 	query 		string 				false 				"Sort Field"
+// @Param 		sortOrder 	query 		string 				false 				"Sort Order: asc,desc"
+// @Success 200 {array} object.ApplicationInfo The Response object
+// @router /applications [get]
 func (c *ApiController) GetApplications() {
+	params := c.GetQueryParams()
 	userId := c.GetSessionUsername()
-	owner := c.Input().Get("owner")
-	limit := c.Input().Get("pageSize")
-	page := c.Input().Get("p")
-	field := c.Input().Get("field")
-	value := c.Input().Get("value")
-	sortField := c.Input().Get("sortField")
-	sortOrder := c.Input().Get("sortOrder")
-	organization := c.Input().Get("organization")
-	var err error
-	if limit == "" || page == "" {
-		var applications []*object.Application
-		if organization == "" {
-			applications, err = object.GetApplications(owner)
-		} else {
-			applications, err = object.GetOrganizationApplications(owner, organization)
-		}
-		if err != nil {
-			c.ResponseError(err.Error())
-			return
-		}
-		c.ResponseOk(object.GetMaskedApplications(applications, userId))
-	} else {
-		limit := util.ParseInt(limit)
-		count, err := object.GetApplicationCount(owner, field, value)
-		if err != nil {
-			c.ResponseError(err.Error())
-			return
-		}
 
-		paginator := pagination.SetPaginator(c.Ctx, limit, count)
-		application, err := object.GetPaginationApplications(owner, paginator.Offset(), limit, field, value, sortField, sortOrder)
-		if err != nil {
-			c.ResponseError(err.Error())
-			return
-		}
+	matchFilters, queryFilters := make(object.And), make(object.Or)
+	matchFilters["organization"] = params.Organization
+	matchFilters["is_shared"] = true
 
-		applications := object.GetMaskedApplications(application, userId)
-		c.ResponseOk(applications, paginator.Nums())
+	queryFilters["displayName"] = params.Query
+	applications, count, err := Query[object.Application](
+		c,
+		matchFilters,
+		queryFilters,
+		params,
+	)
+	if err != nil {
+		c.ResponseErr(err)
+		return
 	}
+	applications = object.GetMaskedApplications(applications, userId)
+	c.ResponseOk(QueryResult(object.GetApplicationInfos(applications), count))
+}
+
+// GetApplication
+// @Title GetApplication
+// @Tag Application API old
+// @Description get the detail of an application， 不知道为啥一定要有的一个applications开头的url
+// @Param   id     query    string  true        "The id ( owner/name ) of the application."
+// @Success 200 {object} object.Application The Response object
+// @router applications/:appId [get]
+func (c *ApiController) GetApplication2() {
+
 }
 
 // GetApplication
 // @Title GetApplication
 // @Tag Application API
 // @Description get the detail of an application
-// @Param   id     query    string  true        "The id ( owner/name ) of the application."
-// @Success 200 {object} object.Application The Response object
-// @router /get-application [get]
+// @Param   name     path    string  true        "The id ( name ) of the application."
+// @Success 200 {object} object.ApplicationDetail The Response object
+// @router /applications/:name [get]
 func (c *ApiController) GetApplication() {
 	userId := c.GetSessionUsername()
-	id := c.Input().Get("id")
+	id := c.Ctx.Input.Param(":name")
+	organization := c.getOrganization()
 
-	application, err := object.GetApplication(id)
+	application, err := object.GetApplicationByOrganization(organization, id)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 
 	if c.Input().Get("withKey") != "" && application != nil && application.Cert != "" {
 		cert, err := object.GetCert(util.GetId(application.Owner, application.Cert))
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
 		if cert == nil {
 			cert, err = object.GetCert(util.GetId(application.Organization, application.Cert))
 			if err != nil {
-				c.ResponseError(err.Error())
+				c.ResponseErr(err)
 				return
 			}
 		}
@@ -113,12 +113,12 @@ func (c *ApiController) GetApplication() {
 	clientIp := util.GetClientIpFromRequest(c.Ctx.Request)
 	object.CheckEntryIp(clientIp, nil, application, nil, c.GetAcceptLanguage())
 
-	c.ResponseOk(object.GetMaskedApplication(application, userId))
+	c.ResponseOk(object.GetApplicationInfo(object.GetMaskedApplication(application, userId)))
 }
 
 // GetUserApplication
 // @Title GetUserApplication
-// @Tag Application API
+// @Tag Application API2
 // @Description get the detail of the user's application
 // @Param   id     query    string  true        "The id ( owner/name ) of the user"
 // @Success 200 {object} object.Application The Response object
@@ -129,7 +129,7 @@ func (c *ApiController) GetUserApplication() {
 
 	user, err := object.GetUser(id)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 	if user == nil {
@@ -139,7 +139,7 @@ func (c *ApiController) GetUserApplication() {
 
 	application, err := object.GetApplicationByUser(user)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
 	if application == nil {
@@ -152,7 +152,7 @@ func (c *ApiController) GetUserApplication() {
 
 // GetOrganizationApplications
 // @Title GetOrganizationApplications
-// @Tag Application API
+// @Tag Application API2
 // @Description get the detail of the organization's application
 // @Param   organization     query    string  true        "The organization name"
 // @Success 200 {array} object.Application The Response object
@@ -176,13 +176,13 @@ func (c *ApiController) GetOrganizationApplications() {
 	if limit == "" || page == "" {
 		applications, err := object.GetOrganizationApplications(owner, organization)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
 		applications, err = object.GetAllowedApplications(applications, userId, c.GetAcceptLanguage())
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
@@ -192,20 +192,20 @@ func (c *ApiController) GetOrganizationApplications() {
 
 		count, err := object.GetOrganizationApplicationCount(owner, organization, field, value)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
 		paginator := pagination.SetPaginator(c.Ctx, limit, count)
 		applications, err := object.GetPaginationOrganizationApplications(owner, organization, paginator.Offset(), limit, field, value, sortField, sortOrder)
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
 		applications, err = object.GetAllowedApplications(applications, userId, c.GetAcceptLanguage())
 		if err != nil {
-			c.ResponseError(err.Error())
+			c.ResponseErr(err)
 			return
 		}
 
@@ -218,26 +218,50 @@ func (c *ApiController) GetOrganizationApplications() {
 // @Title UpdateApplication
 // @Tag Application API
 // @Description update an application
-// @Param   id     query    string  true        "The id ( owner/name ) of the application"
-// @Param   body    body   object.Application  true        "The details of the application"
+// @Param   name     path    string  true        "The id ( owner/name ) of the application"
+// @Param   body    body   object.AddApplicationInfo  true        "The details of the application"
 // @Success 200 {object} controllers.Response The Response object
-// @router /update-application [post]
+// @router /applications/:name [put]
 func (c *ApiController) UpdateApplication() {
-	id := c.Input().Get("id")
+	appId := c.Ctx.Input.Param(":name")
 
-	var application object.Application
-	err := json.Unmarshal(c.Ctx.Input.RequestBody, &application)
+	application, err := object.GetApplicationByOrganization(c.getOrganization(), appId)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
+	}
+	if application == nil {
+		c.ResponseErr(errorx.NotFoundAppErr)
+		return
+	}
+	id := util.GetId(application.Owner, appId)
+
+
+	organization, owner := application.Organization, application.Owner
+	if err != nil {
+		c.ResponseErr(err)
+		return
+	}
+
+	err = json.Unmarshal(c.Ctx.Input.RequestBody, application)
+	if err != nil {
+		c.ResponseErr(err)
+		return
+	}
+	userId := c.GetSessionUsername()
+	userOwner, _ := util.GetOwnerAndNameFromId(userId)
+
+	// 禁止修改
+	if  userOwner != "built-in" {
+		application.Organization = organization
+		application.Owner = owner
 	}
 
 	if err = object.CheckIpWhitelist(application.IpWhitelist, c.GetAcceptLanguage()); err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(err)
 		return
 	}
-
-	c.Data["json"] = wrapActionResponse(object.UpdateApplication(id, &application))
+	c.Data["json"] = c.WrapResponse(object.UpdateApplication(id, application))
 	c.ServeJSON()
 }
 
@@ -245,34 +269,44 @@ func (c *ApiController) UpdateApplication() {
 // @Title AddApplication
 // @Tag Application API
 // @Description add an application
-// @Param   body    body   object.Application  true        "The details of the application"
+// @Param   body    body   object.AddApplicationInfo  true        "The details of the application"
 // @Success 200 {object} controllers.Response The Response object
-// @router /add-application [post]
+// @router /applications [post]
 func (c *ApiController) AddApplication() {
 	var application object.Application
+	defaults.SetDefaults(&application)
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &application)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(errorx.InvalidParamErr)
 		return
 	}
 
-	count, err := object.GetApplicationCount("", "", "")
-	if err != nil {
-		c.ResponseError(err.Error())
-		return
-	}
-
-	if err := checkQuotaForApplication(int(count)); err != nil {
-		c.ResponseError(err.Error())
+	if err := checkQuotaForApplication(); err != nil {
+		logs.Error("checkQuotaForApplication, err=%s", err)
+		c.ResponseErr(err)
 		return
 	}
 
 	if err = object.CheckIpWhitelist(application.IpWhitelist, c.GetAcceptLanguage()); err != nil {
-		c.ResponseError(err.Error())
+		logs.Error("CheckIpWhitelist, err=%s", err)
+		c.ResponseErr(err)
 		return
 	}
+	organization := c.getOrganization()
+	userId := c.GetSessionUsername()
+	owner, _ := util.GetOwnerAndNameFromId(userId)
+	if application.Organization == "" || owner != "built-in" {
+		application.Organization = organization
+	}
+	if application.Owner == "" || owner != "built-in" {
+		application.Owner = organization
+	}
 
-	c.Data["json"] = wrapActionResponse(object.AddApplication(&application))
+	if application.Name == "" {
+		application.Name = uuid.NewString()
+	}
+
+	c.Data["json"] = c.WrapResponse(object.AddApplication(&application))
 	c.ServeJSON()
 }
 
@@ -280,17 +314,34 @@ func (c *ApiController) AddApplication() {
 // @Title DeleteApplication
 // @Tag Application API
 // @Description delete an application
-// @Param   body    body   object.Application  true        "The details of the application"
+// @Param   body    body   object.DeleteApplicationParams   true        "application.name 列表"
 // @Success 200 {object} controllers.Response The Response object
-// @router /delete-application [post]
+// @router /applications [delete]
 func (c *ApiController) DeleteApplication() {
-	var application object.Application
+	var application object.DeleteApplicationParams
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &application)
 	if err != nil {
-		c.ResponseError(err.Error())
+		c.ResponseErr(errorx.InvalidParamErr)
+		return
+	}
+	applicationIds := application.Applications
+	if len(applicationIds) == 0 {
+		c.ResponseOk(true)
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteApplication(&application))
+	organization := c.getOrganization()
+	var apps []*object.Application
+	for _, applicationId := range applicationIds {
+		// 内置管理可以删除任何应用，其他管理员只允许删除组织下的应用
+		if organization != "built-in" {
+			apps = append(apps, &object.Application{
+				Owner: organization,
+				Name:  applicationId,
+			})
+		}
+	}
+
+	c.Data["json"] = c.WrapResponse(object.DeleteApplication(apps))
 	c.ServeJSON()
 }

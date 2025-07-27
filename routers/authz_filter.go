@@ -186,7 +186,7 @@ func ApiFilter(ctx *context.Context) {
 		var err error
 		objOwner, objName, err = getObject(ctx)
 		if err != nil {
-			responseError(ctx, err.Error())
+			responseError(ctx, err)
 			return
 		}
 	}
@@ -218,7 +218,7 @@ func ApiFilter(ctx *context.Context) {
 
 		record.Organization = subOwner
 		record.User = subName // auth:Unauthorized operation
-		record.Response = fmt.Sprintf("{status:\"error\", msg:\"%s\"}", T(ctx, "auth:Unauthorized operation"))
+		record.Response = fmt.Sprintf("{code:101_02_00001, message:\"%s\"}", T(ctx, "auth:Unauthorized operation"))
 
 		util.SafeGoroutine(func() {
 			object.AddRecord(record)

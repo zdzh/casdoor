@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/beego/beego/context"
+	"github.com/casdoor/casdoor/errorx"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
 )
@@ -45,29 +46,32 @@ func AutoSigninFilter(ctx *context.Context) {
 	if accessToken != "" {
 		token, err := object.GetTokenByAccessToken(accessToken)
 		if err != nil {
-			responseError(ctx, err.Error())
+			util.LogWarning(ctx, "Get access token failed, err:%s ", err)
+			responseError(ctx, errorx.AuthenticationErr)
 			return
 		}
 
 		if token == nil {
-			responseError(ctx, "Access token doesn't exist in database")
+			responseError(ctx, errorx.UnAuthenticationErr)
 			return
 		}
 
-		isExpired, expireTime := util.IsTokenExpired(token.CreatedTime, token.ExpiresIn)
+		isExpired, _ := util.IsTokenExpired(token.CreatedTime, token.ExpiresIn)
 		if isExpired {
-			responseError(ctx, fmt.Sprintf("Access token has expired, expireTime = %s", expireTime))
+			responseError(ctx, errorx.AuthenticationExpiredErr)
 			return
 		}
 
 		userId := util.GetId(token.Organization, token.User)
 		application, err := object.GetApplicationByUserId(fmt.Sprintf("app/%s", token.Application))
 		if err != nil {
-			responseError(ctx, err.Error())
+			util.LogWarning(ctx, "GetApplicationByUserId failed, err:%s ", err)
+			responseError(ctx, errorx.AuthenticationErr)
 			return
 		}
 		if application == nil {
-			responseError(ctx, fmt.Sprintf("No application is found for userId: app/%s", token.Application))
+			util.LogWarning(ctx, fmt.Sprintf("No application is found for userId: app/%s", token.Application))
+			responseError(ctx, errorx.UnauthorizedErrFunc("用户无权限访问该应用"))
 			return
 		}
 
@@ -81,7 +85,7 @@ func AutoSigninFilter(ctx *context.Context) {
 	if accessKey != "" && accessSecret != "" {
 		userId, err := getUsernameByKeys(ctx)
 		if err != nil {
-			responseError(ctx, err.Error())
+			responseError(ctx, err)
 		}
 
 		setSessionUser(ctx, userId)
@@ -90,7 +94,7 @@ func AutoSigninFilter(ctx *context.Context) {
 	// "/page?clientId=123&clientSecret=456"
 	userId, err := getUsernameByClientIdSecret(ctx)
 	if err != nil {
-		responseError(ctx, err.Error())
+		responseError(ctx, err)
 		return
 	}
 	if userId != "" {
@@ -105,7 +109,7 @@ func AutoSigninFilter(ctx *context.Context) {
 		owner, name := util.GetOwnerAndNameFromId(userId)
 		_, err = object.CheckUserPassword(owner, name, password, "en")
 		if err != nil {
-			responseError(ctx, err.Error())
+			responseError(ctx, err)
 			return
 		}
 
